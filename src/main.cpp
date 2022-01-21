@@ -21,6 +21,7 @@ const byte WDIR = A0;
 // Declare a mutex Semaphore Handle which we will use to manage the Serial Port.
 // It will be used to ensure only only one Task is accessing this resource at any time.
 SemaphoreHandle_t xSerialSemaphore;
+SemaphoreHandle_t xEncoderSemaphore;
 MPL3115A2 myPressure;
 Weather Humedad;
 
@@ -45,6 +46,9 @@ void Vientosp( void *pvParameters );
 void altitud( void *pvParameters );
 void confhum( void *pvParameters );
 void Hum( void *pvParameters );
+void rainIRQ();
+void wspeedIRQ();
+void speedwind( void *pvParameters );
 //************************************************************************
 //Funciones de fabricante
 void rainIRQ()
@@ -63,35 +67,16 @@ void rainIRQ()
   }
 }
 
-void wspeedIRQ()
+void wspeedIRQ(){
 // Activated by the magnet in the anemometer (2 ticks per rotation), attached to input D3
-{
-  if (millis() - lastWindIRQ > 10) // Ignore switch-bounce glitches less than 10ms (142MPH max reading) after the reed switch closes
-  {
-    lastWindIRQ = millis(); //Grab the current time
-    windClicks++; //There is 1.492MPH for each click per second.
-  }
+
+      lastWindIRQ = millis(); 
+      windClicks++;
+
+
+
 }
-float get_wind_speed()
-{
-  float deltaTime = millis() - lastWindCheck; //750ms
-
-  deltaTime /= 1000.0; //Covert to seconds
-
-  float windSpeed = (float)windClicks / deltaTime; //3 / 0.750s = 4
-
-  windClicks = 0; //Reset and start watching for new wind
-  lastWindCheck = millis();
-
-  windSpeed *= 1.492; //4 * 1.492 = 5.968MPH
-
-  Serial.println();
-    Serial.print("Windspeed:");
-    Serial.println(windSpeed);
-
-  //return (windSpeed);
-}
-int get_wind_direction()
+void get_wind_direction(void* arg)
 {
   unsigned int adc;
 
@@ -100,7 +85,7 @@ int get_wind_direction()
   // The following table is ADC readings for the wind direction sensor output, sorted from low to high.
   // Each threshold is the midpoint between adjacent headings. The output is degrees for that ADC reading.
   // Note that these are not in compass degree order! See Weather Meters datasheet for more information.
-
+/*
   if (adc < 380) return (113);
   if (adc < 393) return (68);
   if (adc < 414) return (90);
@@ -117,7 +102,7 @@ int get_wind_direction()
   if (adc < 940) return (293);
   if (adc < 967) return (315);
   if (adc < 990) return (270);
-  return (-1); // error, disconnected?
+  //return (-1); // error, disconnected?*/
 }
 //******************************************************************************
 // the setup function runs once when you press reset or power the board
@@ -127,9 +112,9 @@ void setup() {
   pinMode(WSPEED, INPUT_PULLUP); // input from wind meters windspeed sensor
   pinMode(RAIN, INPUT_PULLUP);
     // attach external interrupt pins to IRQ functions
-  attachInterrupt(0, rainIRQ, FALLING);
-  attachInterrupt(1, wspeedIRQ, FALLING);
-
+  attachInterrupt(D0, rainIRQ, FALLING);
+  attachInterrupt(D3, wspeedIRQ, FALLING);
+ interrupts();
  
 //********************************
   // initialize serial communication at 9600 bits per second:
@@ -154,15 +139,14 @@ void setup() {
     if ( ( xSerialSemaphore ) != NULL )
       xSemaphoreGive( ( xSerialSemaphore ) );  // Make the Serial Port available for use, by "Giving" the Semaphore.
   }
-
+  if ( xEncoderSemaphore == NULL )  // Check to confirm that the Serial Semaphore has not already been created.
+  {
+    xEncoderSemaphore = xSemaphoreCreateMutex();  // Create a mutex semaphore we will use to manage the Serial Port
+    if ( ( xEncoderSemaphore ) != NULL )
+      xSemaphoreGive( ( xEncoderSemaphore ) );  // Make the Serial Port available for use, by "Giving" the Semaphore.
+  }
   // Now set up two Tasks to run independently.
-  /*xTaskCreate(
-    TaskDigitalRead
-    ,  (const portCHAR *)"DigitalRead"  // A name just for humans
-    ,  128  // This stack size can be checked & adjusted by reading the Stack Highwater
-    ,  NULL
-    ,  2  // Priority, with 3 (configMAX_PRIORITIES - 1) being the highest, and 0 being the lowest.
-    ,  NULL );*/
+
 
   /*xTaskCreate(
     TaskAnalogRead
@@ -198,13 +182,13 @@ void setup() {
     ,  1  // Priority
     ,  NULL );
 
- /*xTaskCreate(
-    Vientosp
+ xTaskCreate(
+    speedwind
     ,  (const portCHAR *) "velocidad del viento"
     ,  128  // Stack size
     ,  NULL
     ,  1  // Priority
-    ,  NULL );*/
+    ,  NULL );
 
   // start scheduler
   vTaskStartScheduler();
@@ -221,7 +205,9 @@ void loop()
 /*--------------------------------------------------*/
 /*---------------------- Tasks ---------------------*/
 /*--------------------------------------------------*/
+//**********************************************************************************************
 
+//**********************************************************************************************
 void TaskDigitalRead( void *pvParameters __attribute__((unused)) )  // This is a Task.
 {
   /*
@@ -293,7 +279,7 @@ void altitud( void *pvParameters __attribute__((unused)) )  // This is a Task.
 
   for (;;)
   {
-    
+   
     myPressure.begin();
     myPressure.setModeAltimeter();
     myPressure.setOversampleRate(128);
@@ -382,3 +368,43 @@ void Hum( void *pvParameters __attribute__((unused)) )  // This is a Task.
 }
 
 /*777777777777777777777777777777777777777777777777777777777777777777777777777777777777*/
+//989898989898989898989898989898989898989898
+
+void speedwind( void *pvParameters __attribute__((unused)) )  // This is a Task.
+{
+
+  for (;;)
+  {
+    
+
+    // See if we can obtain or "Take" the Serial Semaphore.
+    // If the semaphore is not available, wait 5 ticks of the Scheduler to see if it becomes free.
+    if ( xSemaphoreTake( xSerialSemaphore, ( TickType_t ) 5 ) == pdTRUE )
+    {
+      // We were able to obtain or "Take" the semaphore and can now access the shared resource.
+      // We want to have the Serial Port for us alone, as it takes some time to print,
+      // so we don't want it getting stolen during the middle of a conversion.
+      // print out the value you read:
+    
+  float deltaTime = millis() - lastWindCheck; //750ms
+
+  deltaTime /= 1000.0; //Covert to seconds
+
+  float windSpeed = (float)windClicks / deltaTime; //3 / 0.750s = 4
+
+  windClicks = 0; //Reset and start watching for new wind
+  lastWindCheck = millis();
+
+  windSpeed *= 1.492; //4 * 1.492 = 5.968MPH
+
+ 
+    Serial.print(",Windspeed:");
+    Serial.print(windSpeed);
+
+      xSemaphoreGive( xSerialSemaphore ); // Now free or "Give" the Serial Port for others.
+    }
+
+    vTaskDelay(1000);  // one tick delay (15ms) in between reads for stability
+  }
+}
+//9898989898989898989898898989898989898989898
