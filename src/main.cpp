@@ -6,20 +6,19 @@
 #include <SparkFun_Si7021_Breakout_Library.h>
 
 
-//sensores asco//
+//Configuracion de sensores analogos//
 const byte WSPEED = D3;
 const byte RAIN = D2;
 const byte WDIR = A0;
 
 
-// Declare a mutex Semaphore Handle which we will use to manage the Serial Port.
-// It will be used to ensure only only one Task is accessing this resource at any time.
+// declaracion de librerias.
 SemaphoreHandle_t xSerialSemaphore;
 MPL3115A2 myPressure;
 Weather Humedad;
 
 
-//intento sensores viento y lluvia
+//variables de funcionamiento y claculo de cantidades
 //******************************************************
 byte minutes;
 volatile float rainHour[60];
@@ -36,8 +35,9 @@ float altitude =0;
 float temperature =0;
 float humidity =0;
 float windSpeed=0;
+float temph=0;
 //**************************************************************************
-// define two Tasks for DigitalRead & AnalogRead
+//Prototipo de tareas 
 void TaskDigitalRead( void *pvParameters );
 void TaskAnalogRead( void *pvParameters );
 void Vientosp( void *pvParameters );
@@ -47,15 +47,14 @@ void Hum( void *pvParameters );
 void rainIRQ();
 void wspeedIRQ();
 void speedwind( void *pvParameters );
+
 void Impresion( void *pvParameters );
 //************************************************************************
-//Funciones de fabricante
+//Funciones de calculo
 void rainIRQ()
-// Count rain gauge bucket tips as they occur
-// Activated by the magnet and reed switch in the rain gauge, attached to input D2
 {
-  raintime = millis(); // grab current time
-  raininterval = raintime - rainlast; // calculate interval between this and last event
+  raintime = millis(); //variable para calcular el tiempo
+  raininterval = raintime - rainlast; // calculo del intervalo de lluvia
 
   
     dailyrainin += 0.011; //Each dump is 0.011" of water
@@ -66,7 +65,7 @@ void rainIRQ()
 }
 
 void wspeedIRQ(){
-// Activated by the magnet in the anemometer (2 ticks per rotation), attached to input D3
+
 
       lastWindIRQ = millis(); 
       windClicks++;
@@ -76,34 +75,31 @@ void wspeedIRQ(){
 }
 
 //******************************************************************************
-// the setup function runs once when you press reset or power the board
+
 void setup() {
 //*****************************
 //configuracion sensores ANALOGOS DIGITALES
   pinMode(WSPEED, INPUT_PULLUP); // input from wind meters windspeed sensor
   pinMode(RAIN, INPUT_PULLUP);
-    // attach external interrupt pins to IRQ functions
+    // funciones de interrupcion para sensor de velocidad del viento y lluvia
   attachInterrupt(D0, rainIRQ, FALLING);
   attachInterrupt(D3, wspeedIRQ, FALLING);
  interrupts();
  
 //********************************
-  // initialize serial communication at 9600 bits per second:
+  //inicio de comunicacion seria a 9600:
   Serial.begin(9600);
     
     Wire.begin();
-    // Join i2c bus
-   // Start serial for output
+ 
   
 
 
   while (!Serial) {
-    ; // wait for serial port to connect. Needed for native USB, on LEONARDO, MICRO, YUN, and other 32u4 based boards.
+    ;
   }
 
-  // Semaphores are useful to stop a Task proceeding, where it should be paused to wait,
-  // because it is sharing a resource, such as the Serial port.
-  // Semaphores should only be used whilst the scheduler is running, but we can set it up here.
+  //
   if ( xSerialSemaphore == NULL )  // Check to confirm that the Serial Semaphore has not already been created.
   {
     xSerialSemaphore = xSemaphoreCreateMutex();  // Create a mutex semaphore we will use to manage the Serial Port
@@ -111,7 +107,7 @@ void setup() {
       xSemaphoreGive( ( xSerialSemaphore ) );  // Make the Serial Port available for use, by "Giving" the Semaphore.
   }
   
-  // Now set up two Tasks to run independently.
+//configuracion de tareas
 
 
   xTaskCreate(
@@ -155,6 +151,7 @@ void setup() {
     ,  NULL
     ,  1  // Priority
     ,  NULL );
+    
  xTaskCreate(
     Impresion
     ,  (const portCHAR *) "Tarea de impresion de datos"
@@ -187,14 +184,10 @@ void TaskAnalogRead( void *pvParameters __attribute__((unused)) )  // This is a 
     // read the input on analog pin 0:
     int adc = analogRead(A0);
 
-    // See if we can obtain or "Take" the Serial Semaphore.
-    // If the semaphore is not available, wait 5 ticks of the Scheduler to see if it becomes free.
+    
     if ( xSemaphoreTake( xSerialSemaphore, ( TickType_t ) 5 ) == pdTRUE )
     {
-      // We were able to obtain or "Take" the semaphore and can now access the shared resource.
-      // We want to have the Serial Port for us alone, as it takes some time to print,
-      // so we don't want it getting stolen during the middle of a conversion.
-      // print out the value you read:
+      
       
     if (adc < 380) {windir = (113);}
  else if (adc < 393) {windir = (68);}
@@ -218,7 +211,7 @@ void TaskAnalogRead( void *pvParameters __attribute__((unused)) )  // This is a 
       xSemaphoreGive( xSerialSemaphore ); // Now free or "Give" the Serial Port for others.
     }
 
-    vTaskDelay(1000);  // one tick delay (15ms) in between reads for stability
+    vTaskDelay(10000/portTICK_PERIOD_MS);  
   }
 }
 /****************************************************/
@@ -235,14 +228,10 @@ void altitud( void *pvParameters __attribute__((unused)) )  // This is a Task.
     myPressure.setModeAltimeter();
     myPressure.setOversampleRate(128);
     myPressure.enableEventFlags();
-    // See if we can obtain or "Take" the Serial Semaphore.
-    // If the semaphore is not available, wait 5 ticks of the Scheduler to see if it becomes free.
+    
     if ( xSemaphoreTake( xSerialSemaphore, ( TickType_t ) 5 ) == pdTRUE )
     {
-      // We were able to obtain or "Take" the semaphore and can now access the shared resource.
-      // We want to have the Serial Port for us alone, as it takes some time to print,
-      // so we don't want it getting stolen during the middle of a conversion.
-      // print out the value you read:
+      
        pressure = myPressure.readPressure();
       //Serial.print("Pressure(Pa):");
       //Serial.print(pressure, 2);
@@ -258,70 +247,14 @@ void altitud( void *pvParameters __attribute__((unused)) )  // This is a Task.
       xSemaphoreGive( xSerialSemaphore ); // Now free or "Give" the Serial Port for others.
     }
 
-    vTaskDelay(1000);  // one tick delay (15ms) in between reads for stability
+    vTaskDelay(10000/portTICK_PERIOD_MS);  
   }
 }
 /*//////////////////////////////////////////////////////////////////////////////////////*/
-/*-------------------------------------------------------------------------------------*/
-void  RainToday( void *pvParameters __attribute__((unused)) )  // This is a Task.
-{
 
-  for (;;)
-  {
-    
-
-    // See if we can obtain or "Take" the Serial Semaphore.
-    // If the semaphore is not available, wait 5 ticks of the Scheduler to see if it becomes free.
-    if ( xSemaphoreTake( xSerialSemaphore, ( TickType_t ) 5 ) == pdTRUE )
-    {
-      // We were able to obtain or "Take" the semaphore and can now access the shared resource.
-      // We want to have the Serial Port for us alone, as it takes some time to print,
-      // so we don't want it getting stolen during the middle of a conversion.
-      // print out the value you read:
-      rainin = 0;
-      for (int i = 0 ; i < 60 ; i++)
-      rainin += rainHour[i];
-  
-
-      xSemaphoreGive( xSerialSemaphore ); // Now free or "Give" the Serial Port for others.
-    }
-
-    vTaskDelay(1000);  // one tick delay (15ms) in between reads for stability
-  }
-}
-
-/*------------------------------------------------------------------------------------*/
-/*777777777777777777777777777777777777777777777777777777777777777777777777777777777777*/
-void Hum( void *pvParameters __attribute__((unused)) )  // This is a Task.
-{
-
-  for (;;)
-  {
-    
-
-    // See if we can obtain or "Take" the Serial Semaphore.
-    // If the semaphore is not available, wait 5 ticks of the Scheduler to see if it becomes free.
-    if ( xSemaphoreTake( xSerialSemaphore, ( TickType_t ) 5 ) == pdTRUE )
-    {
-      // We were able to obtain or "Take" the semaphore and can now access the shared resource.
-      // We want to have the Serial Port for us alone, as it takes some time to print,
-      // so we don't want it getting stolen during the middle of a conversion.
-      // print out the value you read:
-    
-     humidity = Humedad.getRH();
-   // Serial.print(",Humidity:");
-   // Serial.print(humidity);
-    //Serial.println("%");
-
-      xSemaphoreGive( xSerialSemaphore ); // Now free or "Give" the Serial Port for others.
-    }
-
-    vTaskDelay(1000);  // one tick delay (15ms) in between reads for stability
-  }
-}
 
 /*777777777777777777777777777777777777777777777777777777777777777777777777777777777777*/
-//989898989898989898989898989898989898989898
+
 
 void speedwind( void *pvParameters __attribute__((unused)) )  // This is a Task.
 {
@@ -330,14 +263,10 @@ void speedwind( void *pvParameters __attribute__((unused)) )  // This is a Task.
   {
     
 
-    // See if we can obtain or "Take" the Serial Semaphore.
-    // If the semaphore is not available, wait 5 ticks of the Scheduler to see if it becomes free.
+    
     if ( xSemaphoreTake( xSerialSemaphore, ( TickType_t ) 5 ) == pdTRUE )
     {
-      // We were able to obtain or "Take" the semaphore and can now access the shared resource.
-      // We want to have the Serial Port for us alone, as it takes some time to print,
-      // so we don't want it getting stolen during the middle of a conversion.
-      // print out the value you read:
+      
     
       float deltaTime = millis() - lastWindCheck; //750ms
 
@@ -357,50 +286,94 @@ void speedwind( void *pvParameters __attribute__((unused)) )  // This is a Task.
       xSemaphoreGive( xSerialSemaphore ); // Now free or "Give" the Serial Port for others.
     }
 
-    vTaskDelay(1000);  // one tick delay (15ms) in between reads for stability
+    vTaskDelay(10000/portTICK_PERIOD_MS);  
   }
 }
-//9898989898989898989898898989898989898989898
+
+//979797979797979797979797979797979797797979797979797979797977979797979
+/*-------------------------------------------------------------------------------------*/
+void  RainToday( void *pvParameters __attribute__((unused)) )  // This is a Task.
+{
+
+  for (;;)
+  {
+    
+    if ( xSemaphoreTake( xSerialSemaphore, ( TickType_t ) 5 ) == pdTRUE )
+    {
+      
+      rainin = 0;
+      for (int i = 0 ; i < 60 ; i++)
+      rainin += rainHour[i];
+  
+
+      xSemaphoreGive( xSerialSemaphore ); // Now free or "Give" the Serial Port for others.
+    }
+
+    vTaskDelay(10000/portTICK_PERIOD_MS);  
+  }
+}
+
+/*------------------------------------------------------------------------------------*/
+/*777777777777777777777777777777777777777777777777777777777777777777777777777777777777*/
+void Hum( void *pvParameters __attribute__((unused)) )  // This is a Task.
+{
+
+  for (;;)
+  {
+    
+    if ( xSemaphoreTake( xSerialSemaphore, ( TickType_t ) 5 ) == pdTRUE )
+    {
+    
+     humidity = Humedad.getRH();
+     temph=Humedad.getTemp();
+   // Serial.print(",Humidity:");
+   // Serial.print(humidity);
+    //Serial.println("%");
+
+      xSemaphoreGive( xSerialSemaphore ); // Now free or "Give" the Serial Port for others.
+    }
+
+    vTaskDelay(10000/portTICK_PERIOD_MS); 
+  }
+}
+
+/*777777777777777777777777777777777777777777777777777777777777777777777777777777777777*/
+
 //**********************************************************************************************
 void Impresion( void *pvParameters __attribute__((unused)) )  // This is a Task.
 {
 
   for (;;)
   {
-    
-
-    // See if we can obtain or "Take" the Serial Semaphore.
-    // If the semaphore is not available, wait 5 ticks of the Scheduler to see if it becomes free.
     if ( xSemaphoreTake( xSerialSemaphore, ( TickType_t ) 5 ) == pdTRUE )
     {
-      // We were able to obtain or "Take" the semaphore and can now access the shared resource.
-      // We want to have the Serial Port for us alone, as it takes some time to print,
-      // so we don't want it getting stolen during the middle of a conversion.
-      // print out the value you read:
       Serial.print("@");
+      //Serial.print();
       Serial.print("Windspeed:");
-      Serial.print(windSpeed);
+      Serial.print(windSpeed,2);
       Serial.print(":WindDir: ");
-      Serial.print(windir); 
+      Serial.print(windir,2); 
       Serial.print(":Pressure: ");
-      Serial.print(pressure);  
+      Serial.print(pressure,2);  
       Serial.print(":Altitude: ");
-      Serial.print(altitude);
+      Serial.print(altitude,2);
       Serial.print(":Temperature: ");
-      Serial.print(temperature);
+      Serial.print(temperature,2);
+      Serial.print(":TemperatureHH: ");
+      Serial.print(temph,2);      
       Serial.print(":Humedad R: ");
-      Serial.print(humidity);
+      Serial.print(humidity,2);
       Serial.print(":Rainin: ");
-      Serial.print(rainin);
+      Serial.print(rainin,2);
       Serial.print(":DailyRainIn: ");
-      Serial.print(dailyrainin);
+      Serial.print(dailyrainin,2);
       Serial.println(":#");                           
 
 
       xSemaphoreGive( xSerialSemaphore ); // Now free or "Give" the Serial Port for others.
     }
 
-    vTaskDelay(1000);  // one tick delay (15ms) in between reads for stability
+    vTaskDelay(10000/portTICK_PERIOD_MS); 
   }
 }
 
